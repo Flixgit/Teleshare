@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 import sys
 import threading
 
@@ -26,16 +27,29 @@ logging.basicConfig(
 
 try:
     import uvloop  # type: ignore[reportMissingImports]
-
     uvloop.install()
     logging.info("Using UVLoop for enhanced performance")
 except ImportError:
     logging.warning("UVLoop not installed. Falling back to asyncio")
 
 background_tasks = set()
+bot_client = None  # Will be initialized in main()
+
+
+def handle_sigterm(signum, frame):
+    logging.info("Received SIGTERM. Shutting down gracefully...")
+    if bot_client:
+        loop = asyncio.get_event_loop()
+        loop.create_task(bot_client.stop())
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, handle_sigterm)
 
 
 async def main() -> None:
+    global bot_client
+
     bot_client = Client(
         name=config.BOT_SESSION,
         api_id=config.API_ID,
@@ -46,10 +60,8 @@ async def main() -> None:
         max_message_cache_size=config.BOT_MAX_MESSAGE_CACHE_SIZE,
     )
 
-    # Load database settings
     await options.load_settings()
     await bot_client.start()
-    # Bot setup
 
     try:
         channels_n_invite = await PyroHelper.get_channel_invites(
@@ -67,6 +79,7 @@ async def main() -> None:
         http_server = HTTPServer(host=config.HOSTNAME, port=config.PORT)
         task = asyncio.create_task(http_server.run_server())
         background_tasks.add(task)
+
     if config.RATE_LIMITER:
         thread = threading.Thread(target=RateLimiter.cooldown_limiter)
         thread.daemon = True
